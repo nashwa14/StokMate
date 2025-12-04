@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import '../controllers/inventory_controller.dart';
-import '../services/location_service.dart';
-import '../models/inventory_models.dart';
+import 'package:flutter/services.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/inventory_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/auth_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/services/location_service.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/services/notification_service.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/models/inventory_models.dart';
 import 'dart:async';
 
 class AddEditPage extends StatefulWidget {
@@ -12,17 +15,28 @@ class AddEditPage extends StatefulWidget {
   State<AddEditPage> createState() => _AddEditPageState();
 }
 
+const List<String> supportedCurrencies = [
+  'USD',
+  'EUR',
+  'JPY',
+  'KRW',
+  'GBP',
+  'IDR',
+];
+
 class _AddEditPageState extends State<AddEditPage> {
   final _controller = InventoryController();
+  final _auth = AuthController();
   final _locationService = LocationService();
   final _formKey = GlobalKey<FormState>();
 
+  String? _currentUsername;
   final _name = TextEditingController();
   final _quantity = TextEditingController();
   final _price = TextEditingController();
   final _category = TextEditingController();
   final _unit = TextEditingController();
-  final _currency = TextEditingController(text: 'IDR'); // ✅ Default IDR
+  final _currency = TextEditingController(text: 'IDR');
 
   DateTime _expiryDate = DateTime.now().add(const Duration(days: 30));
   String _locationName = 'Lokasi belum diambil/dipilih';
@@ -30,7 +44,6 @@ class _AddEditPageState extends State<AddEditPage> {
   double _lon = 0.0;
   bool _loading = false;
 
-  // Suggestions untuk autocomplete
   final List<String> _categorySuggestions = [
     "Bumbu Dapur",
     "Produk Segar",
@@ -52,17 +65,27 @@ class _AddEditPageState extends State<AddEditPage> {
     'mililiter',
     'pak',
     'roll',
+    'gram',
+    'box',
   ];
 
   @override
   void initState() {
     super.initState();
+    _loadCurrentUser();
     if (widget.itemToEdit != null) {
       _initializeEditMode(widget.itemToEdit!);
     } else {
       _category.text = '';
       _unit.text = 'pcs';
       _currency.text = 'IDR';
+    }
+  }
+
+  Future<void> _loadCurrentUser() async {
+    final username = _auth.getSession();
+    if (username != null) {
+      setState(() => _currentUsername = username);
     }
   }
 
@@ -79,8 +102,9 @@ class _AddEditPageState extends State<AddEditPage> {
 
   void _initializeEditMode(InventoryItem item) {
     _name.text = item.name;
+    // Tampilkan angka desimal dengan format yang tepat
     _quantity.text = item.quantity.toString();
-    _price.text = item.price.toStringAsFixed(0);
+    _price.text = item.price.toString();
     _category.text = item.category;
     _unit.text = item.unit;
     _currency.text = item.currency;
@@ -102,9 +126,9 @@ class _AddEditPageState extends State<AddEditPage> {
         }),
       ]);
     } on TimeoutException catch (e) {
-      if (mounted && showMsg) _msg(e.message ?? 'Timeout.', false);
+      if (mounted && showMsg) _showSnackbar(e.message ?? 'Timeout.', SnackbarType.warning);
     } catch (e) {
-      if (mounted && showMsg) _msg('Gagal mengambil lokasi: $e', false);
+      if (mounted && showMsg) _showSnackbar('Gagal mengambil lokasi: $e', SnackbarType.error);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -125,7 +149,7 @@ class _AddEditPageState extends State<AddEditPage> {
         _lat = position.latitude;
         _lon = position.longitude;
       });
-      _msg('Lokasi berhasil diambil: $address', true);
+      _showSnackbar('Lokasi berhasil diambil: $address', SnackbarType.success);
     } else {
       throw Exception('GPS tidak aktif atau gagal mendapatkan lokasi.');
     }
@@ -139,7 +163,7 @@ class _AddEditPageState extends State<AddEditPage> {
       lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
       builder: (context, child) => Theme(
         data: ThemeData.light().copyWith(
-          colorScheme: const ColorScheme.light(primary: Color(0xFF4CAF50)),
+          colorScheme: const ColorScheme.light(primary: Color(0xFF26A69A)),
         ),
         child: child!,
       ),
@@ -150,26 +174,35 @@ class _AddEditPageState extends State<AddEditPage> {
   }
 
   Future<void> _onSaveItem() async {
+    if (_currentUsername == null) {
+      _showSnackbar('User tidak ditemukan. Silakan login kembali.', SnackbarType.error);
+      return;
+    }
+
     if (_loading) return;
     if (!_formKey.currentState!.validate()) {
-      _msg('Harap lengkapi semua field yang wajib diisi.', false);
+      _showSnackbar('Harap lengkapi semua field yang wajib diisi.', SnackbarType.warning);
       return;
     }
     if (_lat == 0.0 && _lon == 0.0) {
-      _msg('Harap ambil lokasi pembelian terlebih dahulu!', false);
+      _showSnackbar('Harap ambil lokasi pembelian terlebih dahulu!', SnackbarType.warning);
       return;
     }
 
     setState(() => _loading = true);
 
     try {
+      // Parse quantity dan price sebagai double untuk mendukung desimal
+      final quantity = double.parse(_quantity.text);
+      final price = double.parse(_price.text);
+
       final newItem = InventoryItem(
         id: widget.itemToEdit?.id,
         name: _name.text.trim(),
         category: _category.text.trim(),
-        quantity: int.parse(_quantity.text),
+        quantity: quantity,
         unit: _unit.text.trim(),
-        price: double.parse(_price.text),
+        price: price,
         currency: _currency.text.trim(),
         expiryDate: _expiryDate,
         location: _locationName,
@@ -177,27 +210,71 @@ class _AddEditPageState extends State<AddEditPage> {
         longitude: _lon,
       );
 
-      await _controller.saveItem(newItem);
+      await _controller.saveItem(newItem, _currentUsername!);
 
       if (!mounted) return;
-      final action = widget.itemToEdit == null ? 'ditambahkan' : 'diperbarui';
-      _msg('Item berhasil $action!', true);
+      
+      // Tampilkan notifikasi sistem berdasarkan aksi
+      if (widget.itemToEdit == null) {
+        // Barang baru ditambahkan
+        await NotificationService.showItemAddedNotification(_name.text.trim());
+      } else {
+        // Barang diupdate
+        await NotificationService.showItemUpdatedNotification(_name.text.trim());
+      }
+      
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      _msg('Gagal menyimpan item: $e', false);
+      _showSnackbar('Gagal menyimpan item: $e', SnackbarType.error);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _msg(String msg, bool isSuccess) {
+  void _showSnackbar(String text, SnackbarType type) {
     if (!mounted) return;
+    
+    Color backgroundColor;
+    IconData icon;
+    
+    switch (type) {
+      case SnackbarType.success:
+        backgroundColor = const Color(0xFF26A69A);
+        icon = Icons.check_circle_outline;
+        break;
+      case SnackbarType.error:
+        backgroundColor = const Color(0xFFFF6B6B);
+        icon = Icons.error_outline;
+        break;
+      case SnackbarType.warning:
+        backgroundColor = const Color(0xFFFFB74D);
+        icon = Icons.warning_amber_rounded;
+        break;
+      case SnackbarType.info:
+        backgroundColor = const Color(0xFF4DB6AC);
+        icon = Icons.info_outline;
+        break;
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: isSuccess ? Colors.green : Colors.red,
-        duration: Duration(seconds: isSuccess ? 2 : 4),
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: Duration(seconds: type == SnackbarType.error ? 4 : 2),
       ),
     );
   }
@@ -206,193 +283,206 @@ class _AddEditPageState extends State<AddEditPage> {
   Widget build(BuildContext context) {
     final isEditing = widget.itemToEdit != null;
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Stack(
-        children: [
-          // Header
-          Container(
-            height: 1000,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF4CAF50), Color(0xFF81C784)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+      backgroundColor: const Color(0xFFE0F7F4),
+      appBar: AppBar(
+        title: Text(
+          isEditing ? 'Edit Item' : 'Tambah Item Stok',
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: const Color(0xFF26A69A),
+        iconTheme: const IconThemeData(color: Colors.white),
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(25),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5FFFE),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                spreadRadius: 3,
+                blurRadius: 10,
+                offset: const Offset(0, 5),
               ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30),
-                bottomRight: Radius.circular(30),
-              ),
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 10, left: 10),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      isEditing ? 'Edit Item' : 'Tambah Item Stok',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            ],
           ),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                _buildLabel('Nama Barang'),
+                _buildCustomTextField(_name, 'Masukkan nama barang', Icons.inventory_2),
+                const SizedBox(height: 20),
 
-          // Form
-          Positioned(
-            top: 150,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(left: 25, right: 25, bottom: 150),
-              child: Container(
-                padding: const EdgeInsets.all(25),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.3),
-                      spreadRadius: 3,
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
+                _buildLabel('Kategori Barang'),
+                _buildAutocompleteField(
+                  controller: _category,
+                  suggestions: _categorySuggestions,
+                  hint: 'Pilih atau ketik kategori',
+                  icon: Icons.category,
+                ),
+                const SizedBox(height: 20),
+
+                _buildLabel('Jumlah & Satuan'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDecimalTextField(
+                        _quantity, 
+                        'Jumlah (boleh desimal)', 
+                        Icons.numbers,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildAutocompleteField(
+                        controller: _unit,
+                        suggestions: _unitSuggestions,
+                        hint: 'Satuan',
+                        icon: Icons.balance,
+                      ),
                     ),
                   ],
                 ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      _buildLabel('Nama Barang'),
-                      _buildCustomTextField(_name, 'masukkan barangnya', Icons.inventory_2),
-                      const Divider(height: 30),
+                const SizedBox(height: 20),
 
-                      _buildLabel('Kategori Barang'),
-                      _buildAutocompleteField(
-                        controller: _category,
-                        suggestions: _categorySuggestions,
-                        hint: 'Pilih atau ketik kategori',
-                        icon: Icons.category,
+                _buildLabel('Harga Beli & Mata Uang'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDecimalTextField(
+                        _price, 
+                        'Harga (boleh desimal)', 
+                        Icons.payments,
                       ),
-                      const Divider(height: 30),
-
-                      _buildLabel('Jumlah & Satuan'),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildCustomTextField(_quantity, '', Icons.numbers, isNumeric: true),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: supportedCurrencies.contains(_currency.text) ? _currency.text : 'IDR',
+                        decoration: InputDecoration(
+                          hintText: 'Mata uang',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
                           ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildAutocompleteField(
-                              controller: _unit,
-                              suggestions: _unitSuggestions,
-                              hint: 'Satuan',
-                              icon: Icons.balance,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 30),
-
-                      _buildLabel('Harga Beli & Mata Uang'),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildCustomTextField(_price, '', Icons.payments, isNumeric: true),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildCustomTextField(_currency, 'Mata uang (contoh: IDR)', Icons.payments_outlined),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 30),
-
-                      _buildLabel('Tanggal Kadaluarsa'),
-                      _buildDateDisplay(),
-                      const Divider(height: 30),
-
-                      _buildLabel('Lokasi Pembelian'),
-                      _buildLocationMapPlaceholder(),
-                      const SizedBox(height: 10),
-                      _buildLocationButton(),
-                      const SizedBox(height: 30),
-
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _loading ? null : _onSaveItem,
-                          icon: _loading
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Icon(Icons.save, color: Colors.white),
-                          label: Text(
-                            _loading
-                                ? 'MENYIMPAN...'
-                                : (isEditing ? 'SIMPAN PERUBAHAN' : 'TAMBAH BARANG'),
-                            style: const TextStyle(fontSize: 18, color: Colors.white),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _loading ? Colors.grey : const Color(0xFF689F38),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            elevation: _loading ? 0 : 5,
-                          ),
+                          filled: true,
+                          fillColor: const Color(0xFFE0F7F4),
+                          prefixIcon: const Icon(Icons.payments_outlined, color: Color(0xFF26A69A)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
                         ),
+                        items: supportedCurrencies
+                            .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => _currency.text = value);
+                          }
+                        },
+                        validator: (value) => (value == null || value.isEmpty) ? 'Wajib diisi' : null,
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                _buildLabel('Tanggal Kadaluarsa'),
+                _buildDateDisplay(),
+                const SizedBox(height: 20),
+
+                _buildLabel('Lokasi Pembelian'),
+                _buildLocationMapPlaceholder(),
+                const SizedBox(height: 10),
+                _buildLocationButton(),
+                const SizedBox(height: 30),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _loading ? null : _onSaveItem,
+                    icon: _loading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.save, color: Colors.white),
+                    label: Text(
+                      _loading
+                          ? 'MENYIMPAN...'
+                          : (isEditing ? 'SIMPAN PERUBAHAN' : 'TAMBAH BARANG'),
+                      style: const TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _loading ? const Color(0xFF80CBC4) : const Color(0xFF26A69A),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: _loading ? 0 : 3,
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
 
-  // === WIDGET HELPER ===
   Widget _buildLabel(String title) => Padding(
         padding: const EdgeInsets.only(bottom: 8.0),
-        child: Text(title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey)),
+        child: Text(
+          title,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF00695C)),
+        ),
       );
 
-  Widget _buildCustomTextField(TextEditingController c, String hint, IconData icon,
-      {bool isNumeric = false}) {
+  Widget _buildCustomTextField(TextEditingController c, String hint, IconData icon) {
     return TextFormField(
       controller: c,
-      keyboardType: isNumeric ? TextInputType.number : TextInputType.text,
+      keyboardType: TextInputType.text,
       decoration: InputDecoration(
         hintText: hint,
-        border:
-            OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+        hintStyle: const TextStyle(color: Color(0xFF80CBC4)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         filled: true,
-        fillColor: Colors.grey[100],
-        prefixIcon: Icon(icon, color: Colors.green),
+        fillColor: const Color(0xFFE0F7F4),
+        prefixIcon: Icon(icon, color: const Color(0xFF26A69A)),
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
       ),
       validator: (value) {
         if (value == null || value.isEmpty) return 'Wajib diisi';
-        if (isNumeric && double.tryParse(value) == null) return 'Harus angka';
+        return null;
+      },
+    );
+  }
+
+  // Widget khusus untuk input desimal
+  Widget _buildDecimalTextField(TextEditingController c, String hint, IconData icon) {
+    return TextFormField(
+      controller: c,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+      ],
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: Color(0xFF80CBC4)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        filled: true,
+        fillColor: const Color(0xFFE0F7F4),
+        prefixIcon: Icon(icon, color: const Color(0xFF26A69A)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
+      ),
+      validator: (value) {
+        if (value == null || value.isEmpty) return 'Wajib diisi';
+        final number = double.tryParse(value);
+        if (number == null) return 'Harus berupa angka';
+        if (number < 0) return 'Tidak boleh negatif';
         return null;
       },
     );
@@ -408,25 +498,23 @@ class _AddEditPageState extends State<AddEditPage> {
       initialValue: TextEditingValue(text: controller.text),
       optionsBuilder: (TextEditingValue textEditingValue) {
         if (textEditingValue.text.isEmpty) return suggestions;
-        return suggestions.where((option) =>
-            option.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+        return suggestions.where((option) => option.toLowerCase().contains(textEditingValue.text.toLowerCase()));
       },
       onSelected: (selection) => controller.text = selection,
       fieldViewBuilder: (context, textEditingController, focusNode, _) {
         textEditingController.text = controller.text;
-        textEditingController.selection =
-            TextSelection.fromPosition(TextPosition(offset: textEditingController.text.length));
+        textEditingController.selection = TextSelection.fromPosition(TextPosition(offset: textEditingController.text.length));
 
         return TextFormField(
           controller: textEditingController,
           focusNode: focusNode,
           decoration: InputDecoration(
             hintText: hint,
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+            hintStyle: const TextStyle(color: Color(0xFF80CBC4)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
             filled: true,
-            fillColor: Colors.grey[100],
-            prefixIcon: Icon(icon, color: Colors.green),
+            fillColor: const Color(0xFFE0F7F4),
+            prefixIcon: Icon(icon, color: const Color(0xFF26A69A)),
             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
           ),
           onChanged: (value) => controller.text = value,
@@ -437,7 +525,7 @@ class _AddEditPageState extends State<AddEditPage> {
         alignment: Alignment.topLeft,
         child: Material(
           elevation: 4,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           child: Container(
             constraints: const BoxConstraints(maxHeight: 200),
             width: MediaQuery.of(context).size.width - 50,
@@ -459,50 +547,67 @@ class _AddEditPageState extends State<AddEditPage> {
   Widget _buildDateDisplay() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
         decoration: BoxDecoration(
-          color: Colors.grey[100],
-          borderRadius: BorderRadius.circular(10),
+          color: const Color(0xFFE0F7F4),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('${_expiryDate.day} ${_getMonthName(_expiryDate.month)} ${_expiryDate.year}',
-                style: const TextStyle(fontSize: 16)),
-            IconButton(icon: const Icon(Icons.edit_calendar, color: Colors.green), onPressed: _selectDate),
+            Text(
+              '${_expiryDate.day} ${_getMonthName(_expiryDate.month)} ${_expiryDate.year}',
+              style: const TextStyle(fontSize: 15, color: Color(0xFF00695C)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_calendar, color: Color(0xFF26A69A)),
+              onPressed: _selectDate,
+            ),
           ],
         ),
       );
 
-  String _getMonthName(int m) =>
-      ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][m - 1];
+  String _getMonthName(int m) => ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][m - 1];
 
   Widget _buildLocationMapPlaceholder() {
     final valid = _lat != 0.0 || _lon != 0.0;
     return Container(
-      height: 150,
+      height: 120,
       decoration: BoxDecoration(
-        color: Colors.grey[200],
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        color: const Color(0xFFE0F7F4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF80CBC4)),
       ),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(valid ? Icons.check_circle : Icons.location_on,
-                size: 40, color: valid ? Colors.green : Colors.red),
+            Icon(
+              valid ? Icons.check_circle : Icons.location_on,
+              size: 36,
+              color: valid ? const Color(0xFF26A69A) : const Color(0xFF80CBC4),
+            ),
             const SizedBox(height: 8),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
               child: Text(
                 _locationName,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: valid ? Colors.green[800] : Colors.red, fontSize: 13),
+                  color: valid ? const Color(0xFF26A69A) : const Color(0xFF80CBC4),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
             if (valid)
-              Text('Lat: ${_lat.toStringAsFixed(4)}, Lon: ${_lon.toStringAsFixed(4)}',
-                  style: const TextStyle(fontSize: 12)),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Lat: ${_lat.toStringAsFixed(4)}, Lon: ${_lon.toStringAsFixed(4)}',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF00796B)),
+                ),
+              ),
           ],
         ),
       ),
@@ -520,13 +625,17 @@ class _AddEditPageState extends State<AddEditPage> {
                   child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                 )
               : const Icon(Icons.gps_fixed, color: Colors.white),
-          label: Text(_loading ? 'Mengambil Lokasi...' : 'Ambil Lokasi Sekarang',
-              style: const TextStyle(color: Colors.white)),
+          label: Text(
+            _loading ? 'Mengambil Lokasi...' : 'Ambil Lokasi Sekarang',
+            style: const TextStyle(color: Colors.white),
+          ),
           style: ElevatedButton.styleFrom(
-            backgroundColor: _loading ? Colors.grey : Colors.teal,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            backgroundColor: _loading ? const Color(0xFF80CBC4) : const Color(0xFF4DB6AC),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
       );
 }
+
+enum SnackbarType { success, error, warning, info }

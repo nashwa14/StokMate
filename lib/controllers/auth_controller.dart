@@ -8,19 +8,19 @@ class AuthController {
     return sha256.convert(bytes).toString();
   }
 
-  Future<bool> register(String username, String password) async {
+  Future<bool> register(String username, String email, String password) async {
     final exists = HiveService.getUser(username);
-    if (exists != null) return false; // username sudah ada
-
+    if (exists != null) return false;
     final hash = _hashPassword(password);
-    await HiveService.insertUser(username, hash);
+    await HiveService.insertUser(username, email, hash);
     return true;
   }
 
-  Future<bool> login(String username, String password) async {
+  Future<bool> login(String usernameOrEmail, String password) async {
+    final username = HiveService.findUsernameByUsernameOrEmail(usernameOrEmail);
+    if (username == null) return false;
     final storedHash = HiveService.getUserPasswordHash(username);
-    if (storedHash == null) return false; // user tidak ada
-
+    if (storedHash == null) return false;
     final inputHash = _hashPassword(password);
     if (inputHash == storedHash) {
       await HiveService.saveSession(username);
@@ -30,5 +30,6 @@ class AuthController {
   }
 
   String? getSession() => HiveService.getCurrentUser();
+  String? getUserEmail(String username) => HiveService.getUserEmail(username);
   Future<void> logout() async => HiveService.clearSession();
 }

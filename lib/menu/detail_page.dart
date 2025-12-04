@@ -1,25 +1,51 @@
 import 'package:flutter/material.dart';
-import '../models/inventory_models.dart';
-import '../controllers/inventory_controller.dart';
-import 'add_edit_page.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/models/inventory_models.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/inventory_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/auth_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/services/notification_service.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/menu/add_edit_page.dart';
 
 class DetailItemPage extends StatefulWidget {
   final InventoryItem item;
   const DetailItemPage({super.key, required this.item});
 
   @override
-  State<DetailItemPage> createState() => _DetailItemPageState(); 
+  State<DetailItemPage> createState() => _DetailItemPageState();
 }
 
 class _DetailItemPageState extends State<DetailItemPage> {
   final _invController = InventoryController();
-  
+  final _auth = AuthController();
+  String? _currentUsername;
   late Future<Map<String, dynamic>> _dataFuture;
-  
+
+  // Helper untuk format angka desimal
+  String _formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    return quantity.toStringAsFixed(2);
+  }
+
+  String _formatPrice(double price) {
+    if (price == price.toInt()) {
+      return price.toInt().toString();
+    }
+    return price.toStringAsFixed(2);
+  }
+
   @override
   void initState() {
     super.initState();
-    _dataFuture = _loadConversionData(); 
+    _loadCurrentUser();
+    _dataFuture = _loadConversionData();
+  }
+
+  Future<void> _loadCurrentUser() async {
+    final username = _auth.getSession();
+    if (username != null) {
+      setState(() => _currentUsername = username);
+    }
   }
 
   Future<Map<String, dynamic>> _loadConversionData() async {
@@ -29,18 +55,45 @@ class _DetailItemPageState extends State<DetailItemPage> {
   }
 
   void _deleteItem() async {
-    if (widget.item.id == null) return;
+    if (widget.item.id == null || _currentUsername == null) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Konfirmasi Hapus'),
-        content: Text('Yakin ingin menghapus item ${widget.item.name}? Tindakan ini tidak bisa dibatalkan.'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: const Color(0xFFF5FFFE),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF6B6B).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              'Konfirmasi Hapus',
+              style: TextStyle(color: Color(0xFF00695C), fontSize: 18),
+            ),
+          ],
+        ),
+        content: Text(
+          'Yakin ingin menghapus "${widget.item.name}"? Tindakan ini tidak bisa dibatalkan.',
+          style: const TextStyle(color: Color(0xFF00796B)),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Batal', style: TextStyle(color: Color(0xFF80CBC4))),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF6B6B),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
             child: const Text('Hapus', style: TextStyle(color: Colors.white)),
           ),
         ],
@@ -48,159 +101,257 @@ class _DetailItemPageState extends State<DetailItemPage> {
     );
 
     if (confirmed == true) {
-      await _invController.deleteItem(widget.item.id!);
+      await _invController.deleteItem(widget.item.id!, _currentUsername!);
+      
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${widget.item.name} berhasil dihapus.'), backgroundColor: Colors.green),
-      );
-      Navigator.pop(context, true); 
+      await NotificationService.showItemDeletedNotification(widget.item.name);
+      Navigator.pop(context, true);
     }
   }
 
   void _editItem() async {
     final result = await Navigator.push(
-      context, 
-      MaterialPageRoute(builder: (_) => AddEditPage(itemToEdit: widget.item)), 
+      context,
+      MaterialPageRoute(builder: (_) => AddEditPage(itemToEdit: widget.item)),
     );
-    
     if (result == true && mounted) {
-      Navigator.pop(context, true); 
+      Navigator.pop(context, true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: Text(widget.item.name, style: const TextStyle(color: Colors.white)),
-        backgroundColor: const Color(0xFF4CAF50),
-        flexibleSpace: Container(
+      backgroundColor: const Color(0xFFE0F7F4),
+      body: CustomScrollView(
+        slivers: [
+          _buildAppBar(),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: FutureBuilder<Map<String, dynamic>>(
+                future: _dataFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(40),
+                        child: CircularProgressIndicator(color: Color(0xFF26A69A)),
+                      ),
+                    );
+                  }
+
+                  final rates = snapshot.data?['rates'] as Map<String, double>? ?? {};
+                  final offsets = snapshot.data?['offsets'] as Map<String, int>? ?? {};
+
+                  return Column(
+                    children: [
+                      _buildMainInfoCard(),
+                      const SizedBox(height: 16),
+                      _buildStatusCard(),
+                      const SizedBox(height: 16),
+                      _buildConversionCard(rates, offsets),
+                      const SizedBox(height: 16),
+                      _buildLocationCard(),
+                      const SizedBox(height: 16),
+                      _buildActionButtons(),
+                      const SizedBox(height: 20),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppBar() {
+    return SliverAppBar(
+      expandedHeight: 120,
+      pinned: true,
+      backgroundColor: const Color(0xFF26A69A),
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back, color: Colors.white),
+        onPressed: () => Navigator.pop(context),
+      ),
+      flexibleSpace: FlexibleSpaceBar(
+        title: Text(
+          widget.item.name,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        background: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF4CAF50), Color(0xFF81C784)],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF26A69A), Color(0xFF4DB6AC)],
             ),
           ),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
       ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: _dataFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)));
-          }
-          
-          final rates = snapshot.data?['rates'] as Map<String, double>? ?? {};
-          final offsets = snapshot.data?['offsets'] as Map<String, int>? ?? {};
-          
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
+    );
+  }
+
+  Widget _buildMainInfoCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5FFFE),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF26A69A).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  _getCategoryIcon(widget.item.category),
+                  color: const Color(0xFF26A69A),
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.item.name,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF00695C),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.item.category,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF00796B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 32, color: Color(0xFF80CBC4)),
+          _buildInfoRow(
+            Icons.inventory_2_outlined,
+            'Stok Tersisa',
+            '${_formatQuantity(widget.item.quantity)} ${widget.item.unit}',
+            widget.item.quantity == 0 ? const Color(0xFFFF6B6B) : const Color(0xFF26A69A),
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            Icons.payments_outlined,
+            'Harga Beli',
+            '${_formatPrice(widget.item.price)} ${widget.item.currency}',
+            const Color(0xFF26A69A),
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            Icons.calendar_today_outlined,
+            'Tanggal Kadaluarsa',
+            _formatDate(widget.item.expiryDate),
+            _getExpiryColor(widget.item.expiryDate),
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            Icons.location_on_outlined,
+            'Lokasi Pembelian',
+            widget.item.location,
+            const Color(0xFF26A69A),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    final status = _invController.getStatus(widget.item);
+    final daysRemaining = widget.item.expiryDate.difference(DateTime.now()).inDays;
+
+    Color statusColor;
+    IconData statusIcon;
+    String statusMessage;
+
+    if (widget.item.quantity == 0) {
+      statusColor = const Color(0xFFFF6B6B);
+      statusIcon = Icons.remove_shopping_cart;
+      statusMessage = 'Stok barang ini sudah habis';
+    } else if (daysRemaining <= 0) {
+      statusColor = const Color(0xFFFF6B6B);
+      statusIcon = Icons.warning_amber_rounded;
+      statusMessage = 'Barang ini sudah kadaluarsa';
+    } else if (widget.item.quantity <= 1) {
+      statusColor = const Color(0xFFFFB74D);
+      statusIcon = Icons.trending_down;
+      statusMessage = 'Stok barang hampir habis';
+    } else if (daysRemaining <= 7) {
+      statusColor = const Color(0xFFFFB74D);
+      statusIcon = Icons.access_time;
+      statusMessage = 'Akan kadaluarsa dalam $daysRemaining hari';
+    } else {
+      statusColor = const Color(0xFF26A69A);
+      statusIcon = Icons.check_circle_outline;
+      statusMessage = 'Barang dalam kondisi baik';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: statusColor.withOpacity(0.3), width: 2),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(statusIcon, color: statusColor, size: 32),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildMainInfoCard(widget.item),
-                const SizedBox(height: 20),
-                _buildConversionCard(rates, offsets),
-                const SizedBox(height: 20),
-                _buildLocationCard(widget.item),
-                const SizedBox(height: 30),
-                _buildActionButtons(),
+                Text(
+                  status,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: statusColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(statusMessage, style: TextStyle(fontSize: 13, color: statusColor)),
               ],
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildMainInfoCard(InventoryItem item) {
-    String stockStatus;
-    Color stockColor;
-    String expiryStatus;
-    Color expiryColor;
-    String overallStatus;
-    Color overallColor;
-
-    if (item.quantity == 0) {
-      stockStatus = 'Stok Habis';
-      stockColor = Colors.red;
-    } else if (item.quantity == 1) {
-      stockStatus = 'Stok Menipis';
-      stockColor = Colors.orange;
-    } else {
-      stockStatus = 'Stok Aman';
-      stockColor = Colors.green;
-    }
-
-    final daysRemaining = item.expiryDate.difference(DateTime.now()).inDays;
-    if (daysRemaining <= 0) {
-      expiryStatus = 'Kadaluarsa';
-      expiryColor = Colors.red;
-    } else if (daysRemaining >= 7) {
-      expiryStatus = 'Hampir Kadaluarsa ($daysRemaining hari)';
-      expiryColor = Colors.orange;
-    } else {
-      expiryStatus = 'Aman';
-      expiryColor = Colors.green;
-    }
-
-    if (item.quantity == 0) {
-      overallStatus = 'Stok Habis';
-      overallColor = Colors.red;
-    } else if (daysRemaining <= 0) {
-      overallStatus = 'Kadaluarsa';
-      overallColor = Colors.red;
-    } else if (item.quantity == 1) {
-      overallStatus = 'Stok Menipis';
-      overallColor = Colors.orange;
-    } else if (daysRemaining >= 7) {
-      overallStatus = 'Hampir Kadaluarsa ($daysRemaining hari)';
-      overallColor = Colors.orange;
-    } else {
-      overallStatus = 'Aman';
-      overallColor = Colors.green;
-    }
-
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(item.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF4CAF50))),
-            const Divider(),
-            _infoRow('Kategori', item.category, Icons.category),
-            _infoRow('Stok Tersisa', '${item.quantity} ${item.unit}', Icons.inventory_2),
-            _infoRow('Harga Beli', '${item.price} ${item.currency}', Icons.payments),
-            const Divider(),
-            // Status Stok
-            _infoRow('Status Stok', stockStatus, Icons.inventory, color: stockColor),
-            // Status Kadaluarsa
-            _infoRow('Status Kadaluarsa', expiryStatus, Icons.calendar_today, color: expiryColor),
-            const Divider(),
-            // Status Keseluruhan
-            _infoRow('Status Keseluruhan', overallStatus, Icons.info, color: overallColor),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _infoRow(String label, String value, IconData icon, {Color? color}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: color ?? const Color(0xFF2E7D32)),
-          const SizedBox(width: 8),
-          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.w500)),
-          Expanded(child: Text(value, style: TextStyle(color: color))),
+          ),
         ],
       ),
     );
@@ -208,13 +359,35 @@ class _DetailItemPageState extends State<DetailItemPage> {
 
   Widget _buildConversionCard(Map<String, double> rates, Map<String, int> offsets) {
     final price = widget.item.price;
-    
-    final usdRate = rates['USD'] ?? 0.000064; 
-    final eurRate = rates['EUR'] ?? 0.000059;
-    final jpyRate = rates['JPY'] ?? 0.0096;
+    final currency = widget.item.currency;
+    final eurRate = rates['EUR'] ?? 0.9;
+    final jpyRate = rates['JPY'] ?? 150.0;
+    final krwRate = rates['KRW'] ?? 1300.0;
+    final gbpRate = rates['GBP'] ?? 0.8;
+    final idrRate = rates['IDR'] ?? 16000.0;
 
-    final double conversionFactor = 1.0 / (rates[widget.item.currency] ?? 1.0); 
-    final double priceInIDR = price * conversionFactor;
+    double priceInUsd;
+    if (currency == 'USD') {
+      priceInUsd = price;
+    } else if (currency == 'EUR') {
+      priceInUsd = price / eurRate;
+    } else if (currency == 'JPY') {
+      priceInUsd = price / jpyRate;
+    } else if (currency == 'KRW') {
+      priceInUsd = price / krwRate;
+    } else if (currency == 'GBP') {
+      priceInUsd = price / gbpRate;
+    } else if (currency == 'IDR') {
+      priceInUsd = price / idrRate;
+    } else {
+      priceInUsd = price;
+    }
+
+    final priceInIdr = priceInUsd * idrRate;
+    final priceInEur = priceInUsd * eurRate;
+    final priceInJpy = priceInUsd * jpyRate;
+    final priceInKrw = priceInUsd * krwRate;
+    final priceInGbp = priceInUsd * gbpRate;
 
     const wibOffsetHours = 7;
     final witaOffsetHours = offsets['WITA'] ?? 8;
@@ -225,100 +398,235 @@ class _DetailItemPageState extends State<DetailItemPage> {
     final expiryWit = widget.item.expiryDate.add(Duration(hours: witOffsetHours - wibOffsetHours));
     final expiryLondon = widget.item.expiryDate.add(Duration(hours: londonOffsetHours - wibOffsetHours));
 
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Konversi Harga', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[700])),
-            const Divider(),
-            _conversionItem('USD', priceInIDR * usdRate, Icons.monetization_on),
-            _conversionItem('EUR', priceInIDR * eurRate, Icons.euro),
-            _conversionItem('JPY', priceInIDR * jpyRate, Icons.currency_yen),
-            
-            const SizedBox(height: 16),
-            Text('Konversi Waktu Kadaluarsa', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[700])),
-            const Divider(),
-
-            _timeItem('WIB', widget.item.expiryDate, Icons.access_time),
-            _timeItem('WITA', expiryWita, Icons.access_time),
-            _timeItem('WIT', expiryWit, Icons.access_time),
-            _timeItem('London', expiryLondon, Icons.access_time),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _conversionItem(String currency, double convertedPrice, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: const Color(0xFF2E7D32)),
-          const SizedBox(width: 8),
-          Text('$currency: ', style: const TextStyle(fontWeight: FontWeight.w500)),
-          Text(convertedPrice.toStringAsFixed(3), style: const TextStyle(color: Colors.teal, fontWeight: FontWeight.bold)),
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5FFFE),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _timeItem(String zone, DateTime date, IconData icon) {
-    final formattedDate = "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: const Color(0xFF2E7D32)),
-          const SizedBox(width: 8),
-          Text('$zone: ', style: const TextStyle(fontWeight: FontWeight.w500)),
-          Text(formattedDate, style: const TextStyle(color: Colors.teal)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLocationCard(InventoryItem item) {
-    final locationValid = item.latitude != 0.0 && item.longitude != 0.0;
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Lokasi Pembelian (LBS)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey[700])),
-            const Divider(),
-            _infoRow('Nama Tempat', item.location, Icons.store),
-            _infoRow('Koordinat', 'Lat ${item.latitude.toStringAsFixed(4)}, Lon ${item.longitude.toStringAsFixed(4)}', Icons.location_on),
-            const SizedBox(height: 10),
-            
-            // Map Placeholder
-            Container(
-              height: 200,
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300)
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.map_outlined, size: 40, color: Colors.grey),
-                    const SizedBox(height: 8),
-                    Text('Peta lokasi ${item.location}', style: const TextStyle(color: Colors.grey)),
-                  ],
+          Row(
+            children: const [
+              Icon(Icons.swap_horiz, color: Color(0xFF26A69A)),
+              SizedBox(width: 8),
+              Text(
+                'Konversi Nilai',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF00695C),
                 ),
               ),
+            ],
+          ),
+          const Divider(height: 24, color: Color(0xFF80CBC4)),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF26A69A).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF26A69A).withOpacity(0.3)),
             ),
-          ],
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 18, color: Color(0xFF26A69A)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Harga asli: ${_formatPrice(price)} $currency',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF26A69A),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Harga dalam Mata Uang Lain',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF00796B),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (currency != 'IDR') _buildConversionItem('IDR (Rupiah)', priceInIdr, Icons.currency_exchange),
+          if (currency != 'USD') _buildConversionItem('USD (Dollar)', priceInUsd, Icons.attach_money),
+          if (currency != 'EUR') _buildConversionItem('EUR (Euro)', priceInEur, Icons.euro_symbol),
+          if (currency != 'JPY') _buildConversionItem('JPY (Yen)', priceInJpy, Icons.currency_yen),
+          if (currency != 'KRW') _buildConversionItem('KRW (Won)', priceInKrw, Icons.currency_exchange),
+          if (currency != 'GBP') _buildConversionItem('GBP (Pound)', priceInGbp, Icons.currency_pound),
+          const SizedBox(height: 20),
+          const Text(
+            'Waktu Kadaluarsa Zona Lain',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF00796B),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildTimeItem('WIB (Indonesia Barat)', widget.item.expiryDate),
+          _buildTimeItem('WITA (Indonesia Tengah)', expiryWita),
+          _buildTimeItem('WIT (Indonesia Timur)', expiryWit),
+          _buildTimeItem('London (GMT)', expiryLondon),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocationCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5FFFE),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.location_on, color: const Color(0xFF26A69A)),
+              const SizedBox(width: 8),
+              const Text(
+                'Lokasi Pembelian',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF00695C),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 24, color: Color(0xFF80CBC4)),
+          _buildInfoRow(
+            Icons.place_outlined,
+            'Alamat',
+            widget.item.location,
+            const Color(0xFF26A69A),
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            Icons.gps_fixed,
+            'Koordinat',
+            'Lat: ${widget.item.latitude.toStringAsFixed(4)}, Lon: ${widget.item.longitude.toStringAsFixed(4)}',
+            const Color(0xFF26A69A),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value, Color color) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF80CBC4),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildConversionItem(String currency, double value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFF26A69A)),
+          const SizedBox(width: 8),
+          Text(
+            currency,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF00695C),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            _formatPrice(value),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF26A69A),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeItem(String zone, DateTime date) {
+    final formatted = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(Icons.access_time, size: 18, color: const Color(0xFF26A69A)),
+          const SizedBox(width: 8),
+          Text(
+            zone,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF00695C),
+            ),
+          ),
+          const Spacer(),
+          Text(
+            formatted,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF26A69A),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -329,29 +637,57 @@ class _DetailItemPageState extends State<DetailItemPage> {
         Expanded(
           child: ElevatedButton.icon(
             onPressed: _editItem,
-            icon: const Icon(Icons.edit, color: Colors.white),
-            label: const Text('Edit Barang', style: TextStyle(color: Colors.white)),
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('Edit'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              backgroundColor: const Color(0xFF26A69A),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 12),
         Expanded(
           child: ElevatedButton.icon(
             onPressed: _deleteItem,
-            icon: const Icon(Icons.delete, color: Colors.white),
-            label: const Text('Hapus', style: TextStyle(color: Colors.white)),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Hapus'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              backgroundColor: const Color(0xFFFF6B6B),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           ),
         ),
       ],
     );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'bumbu dapur': return Icons.restaurant;
+      case 'produk segar': return Icons.grass;
+      case 'minuman': return Icons.local_drink;
+      case 'kesehatan': return Icons.medication;
+      case 'kamar mandi': return Icons.bathroom;
+      case 'kebersihan': return Icons.cleaning_services;
+      case 'perawatan diri & kosmetik': return Icons.face;
+      case 'atk': return Icons.edit;
+      default: return Icons.inventory_2;
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  Color _getExpiryColor(DateTime expiryDate) {
+    final days = expiryDate.difference(DateTime.now()).inDays;
+    if (days <= 0) return const Color(0xFFFF6B6B);
+    if (days <= 7) return const Color(0xFFFFB74D);
+    return const Color(0xFF26A69A);
   }
 }

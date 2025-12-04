@@ -35,7 +35,6 @@ class LocationService {
           throw TimeoutException('GPS timeout');
         },
       );
-      
       return position;
       
     } on TimeoutException {
@@ -68,9 +67,7 @@ class LocationService {
             
         return address.isEmpty ? coordinateFallback : address; 
       }
-      
       return coordinateFallback;
-
     } catch (e) {
       debugPrint('LBS Error Reverse Geocoding: $e'); 
       return coordinateFallback;

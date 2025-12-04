@@ -6,12 +6,10 @@ class HiveService {
   static const String inventoryBox = 'inventoryBox';
 
   static bool _initialized = false;
-
   static Future<void> initHive() async {
     if (_initialized) return;
 
     await Hive.initFlutter();
-
     await Future.wait([
       Hive.openBox(usersBox),
       Hive.openBox(sessionBox),
@@ -22,32 +20,66 @@ class HiveService {
     print("Hive initialized & boxes opened");
   }
 
-  static Future<void> insertUser(String username, String passwordHash) async {
+  static Future<void> insertUser(String username, String email, String passwordHash) async {
     final box = Hive.box(usersBox);
     await box.put(username, {
+      "email": email,
       "password": passwordHash,
       "photo": null,
     });
     print("User '$username' berhasil disimpan di Hive.");
   }
 
-  static Map? getUser(String username) {
+  static Map<String, dynamic>? getUser(String username) {
     final box = Hive.box(usersBox);
-    return box.get(username);
+    final data = box.get(username);
+    if (data is Map) {
+      return Map<String, dynamic>.from(data);
+    }
+    return null;
   }
 
   static String? getUserPasswordHash(String username) {
     final box = Hive.box(usersBox);
     final data = box.get(username);
-    return data?["password"];
+    if (data is Map && data["password"] is String) {
+      return data["password"] as String;
+    }
+    return null;
+  }
+
+  static String? getUserEmail(String username) {
+    final box = Hive.box(usersBox);
+    final data = box.get(username);
+    if (data is Map && data["email"] is String) {
+      return data["email"] as String;
+    }
+    return null;
+  }
+
+  static String? findUsernameByUsernameOrEmail(String usernameOrEmail) {
+    final box = Hive.box(usersBox);
+    
+    if (box.containsKey(usernameOrEmail)) {
+      return usernameOrEmail;
+    }
+    
+    for (var key in box.keys) {
+      final data = box.get(key);
+      if (data is Map && data["email"] == usernameOrEmail) {
+        return key.toString();
+      }
+    }
+    return null;
   }
 
   static Future<void> updateUserPhoto(String username, String path) async {
     final box = Hive.box(usersBox);
     final data = box.get(username);
-    if (data != null) {
-      data["photo"] = path;
-      await box.put(username, data);
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      map["photo"] = path;
+      await box.put(username, map);
       print("Foto profil user '$username' diperbarui.");
     }
   }
@@ -55,7 +87,10 @@ class HiveService {
   static String? getUserPhoto(String username) {
     final box = Hive.box(usersBox);
     final data = box.get(username);
-    return data?["photo"];
+    if (data is Map && data["photo"] is String) {
+      return data["photo"] as String;
+    }
+    return null;
   }
 
   static Future<void> saveSession(String username) async {
@@ -64,7 +99,7 @@ class HiveService {
   }
 
   static String? getCurrentUser() {
-    return Hive.box(sessionBox).get("currentUser");
+    return Hive.box(sessionBox).get("currentUser") as String?;
   }
 
   static Future<void> clearSession() async {
@@ -77,7 +112,6 @@ class HiveService {
       print("Hive belum diinisialisasi, memanggil initHive() otomatis...");
       await initHive();
     }
-
     if (!Hive.isBoxOpen(inventoryBox)) {
       print("Membuka box: $inventoryBox...");
       await Hive.openBox(inventoryBox);
@@ -86,27 +120,48 @@ class HiveService {
     return Hive.box(inventoryBox);
   }
 
-  static Future<void> addInventoryItem(String id, Map<String, dynamic> data) async {
+  static Future<void> addInventoryItem(
+    String username,
+    String id,
+    Map<String, dynamic> data,
+  ) async {
     final box = await getInventoryBox();
-    await box.put(id, data);
-    print("Item '$id' berhasil ditambahkan ke inventory.");
+    final key = '${username}_$id';
+    await box.put(key, data);
+    print("Item '$key' berhasil ditambahkan ke inventory.");
   }
 
-  static Future<void> updateInventoryItem(String id, Map<String, dynamic> data) async {
+  static Future<void> updateInventoryItem(
+    String username,
+    String id,
+    Map<String, dynamic> data,
+  ) async {
     final box = await getInventoryBox();
-    await box.put(id, data);
-    print("Item '$id' berhasil diperbarui di inventory.");
+    final key = '${username}_$id';
+    await box.put(key, data);
+    print("Item '$key' berhasil diperbarui di inventory.");
   }
 
-  static Future<void> deleteInventoryItem(String id) async {
+  static Future<void> deleteInventoryItem(String username, String id) async {
     final box = await getInventoryBox();
-    await box.delete(id);
-    print("Item '$id' berhasil dihapus dari inventory.");
+    final key = '${username}_$id';
+    await box.delete(key);
+    print("Item '$key' berhasil dihapus dari inventory.");
   }
 
-  static Future<List<Map>> getAllInventoryItems() async {
+  static Future<List<Map<String, dynamic>>> getAllInventoryItems(String username) async {
     final box = await getInventoryBox();
-    return box.values.cast<Map>().toList();
+    final List<Map<String, dynamic>> result = [];
+    final prefix = '${username}_';
+    for (final key in box.keys) {
+      if (key.toString().startsWith(prefix)) {
+        final value = box.get(key);
+        if (value is Map) {
+          result.add(Map<String, dynamic>.from(value));
+        }
+      }
+    }
+    return result;
   }
 
   static Future<void> clearAllData() async {

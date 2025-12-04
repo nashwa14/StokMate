@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-import '../controllers/inventory_controller.dart';
-import '../models/inventory_models.dart';
-import '../services/notification_service.dart';
-import '../services/notification_helper.dart';
-import 'add_edit_page.dart';
-import 'detail_page.dart';
-import 'profile_page.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/inventory_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/controllers/auth_controller.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/models/inventory_models.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/services/notification_service.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/services/notification_helper.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/menu/add_edit_page.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/menu/detail_page.dart';
+import 'package:nashwaluthfiya_124230016_pam_a/menu/profile_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,6 +17,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _controller = InventoryController();
+  final _auth = AuthController();
+  String? _currentUsername;
   List<InventoryItem> _allItems = [];
   List<InventoryItem> _filteredItems = [];
   bool _isLoading = true;
@@ -23,6 +26,18 @@ class _HomePageState extends State<HomePage> {
 
   String _searchQuery = '';
   String _selectedStatusFilter = 'Semua Status';
+  String _selectedSortOption = 'Nama (A-Z)';
+  String _selectedCurrencyFilter = 'Semua Mata Uang';
+
+  final List<String> _currencyFilters = [
+    'Semua Mata Uang',
+    'USD',
+    'EUR',
+    'JPY',
+    'KRW',
+    'GBP',
+    'IDR',
+  ];
 
   final List<String> _statusFilters = [
     'Semua Status',
@@ -34,31 +49,44 @@ class _HomePageState extends State<HomePage> {
     'Aman Konsumsi',
   ];
 
+  final List<String> _sortOptions = [
+    'Nama (A-Z)',
+    'Nama (Z-A)',
+    'Harga Tertinggi',
+    'Harga Terendah',
+  ];
+
   Map<String, int> _statusCounts = {};
 
   @override
   void initState() {
     super.initState();
-    _loadItems();
+    _loadCurrentUser();
+  }
+
+  Future<void> _loadCurrentUser() async {
+    final username = _auth.getSession();
+    if (username != null) {
+      setState(() => _currentUsername = username);
+      _loadItems();
+    }
   }
 
   Future<void> _loadItems() async {
-    if (!mounted) return;
+    if (_currentUsername == null || !mounted) return;
     setState(() => _isLoading = true);
     try {
-      final items = await _controller.getAllItems();
+      final items = await _controller.getAllItems(_currentUsername!);
       if (!mounted) return;
       setState(() {
         _allItems = items;
         _calculateStatusCounts();
-        _applyFilters();
+        _applyFiltersAndSort();
         _isLoading = false;
       });
     } catch (e) {
       print('Error loading items: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -72,14 +100,13 @@ class _HomePageState extends State<HomePage> {
     };
   }
 
-  void _applyFilters() {
+  void _applyFiltersAndSort() {
     List<InventoryItem> filtered = List.from(_allItems);
 
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((item) {
         return item.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-               item.category.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-               item.unit.toLowerCase().contains(_searchQuery.toLowerCase());
+            item.category.toLowerCase().contains(_searchQuery.toLowerCase());
       }).toList();
     }
 
@@ -105,25 +132,85 @@ class _HomePageState extends State<HomePage> {
       }).toList();
     }
 
+    if (_selectedCurrencyFilter != 'Semua Mata Uang') {
+      filtered = filtered
+          .where((item) => item.currency == _selectedCurrencyFilter)
+          .toList();
+    }
+
+    switch (_selectedSortOption) {
+      case 'Nama (A-Z)':
+        filtered.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'Nama (Z-A)':
+        filtered.sort((a, b) => b.name.compareTo(a.name));
+        break;
+      case 'Harga Tertinggi':
+        filtered.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case 'Harga Terendah':
+        filtered.sort((a, b) => a.price.compareTo(b.price));
+        break;
+    }
+
     if (mounted) {
-      setState(() {
-        _filteredItems = filtered;
-      });
+      setState(() => _filteredItems = filtered);
     }
   }
 
-  void _onSearchChanged(String query) {
-    _searchQuery = query;
-    _applyFilters();
+  Color _getStatusColor(String status) {
+    if (status.contains('Habis') || status.contains('Kadaluarsa')) {
+      return const Color(0xFFFF6B6B);
+    } else if (status.contains('Menipis') || status.contains('Hampir')) {
+      return const Color(0xFFFFB74D);
+    } else {
+      return const Color(0xFF26A69A);
+    }
   }
 
-  void _onStatusFilterChanged(String? newFilter) {
-    if (newFilter != null && mounted) {
-      setState(() {
-        _selectedStatusFilter = newFilter;
-        _applyFilters();
-      });
+  void _showSnackbar(String text, SnackbarType type) {
+    Color backgroundColor;
+    IconData icon;
+
+    switch (type) {
+      case SnackbarType.success:
+        backgroundColor = const Color(0xFF26A69A);
+        icon = Icons.check_circle_outline;
+        break;
+      case SnackbarType.error:
+        backgroundColor = const Color(0xFFFF6B6B);
+        icon = Icons.error_outline;
+        break;
+      case SnackbarType.warning:
+        backgroundColor = const Color(0xFFFFB74D);
+        icon = Icons.warning_amber_rounded;
+        break;
+      case SnackbarType.info:
+        backgroundColor = const Color(0xFF4DB6AC);
+        icon = Icons.info_outline;
+        break;
     }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(icon, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                text,
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _checkNotifications() async {
@@ -132,26 +219,10 @@ class _HomePageState extends State<HomePage> {
     setState(() => _isCheckingNotification = true);
 
     try {
-      await NotificationService.checkAndNotify();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Pengecekan notifikasi selesai'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      await NotificationService.showStockSummaryNotification(_allItems);
+      _showSnackbar('Notifikasi telah dikirim', SnackbarType.info);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
+      _showSnackbar('Gagal mengirim notifikasi: $e', SnackbarType.error);
     } finally {
       if (mounted) {
         setState(() => _isCheckingNotification = false);
@@ -159,311 +230,439 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _navigateToAddEdit({InventoryItem? item}) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => AddEditPage(itemToEdit: item)),
-    );
-    if (result == true && mounted) {
-      _loadItems();
+  // Helper untuk format angka desimal
+  String _formatQuantity(double quantity) {
+    // Jika angka bulat, tampilkan tanpa desimal
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
     }
+    // Jika desimal, tampilkan dengan 2 digit desimal
+    return quantity.toStringAsFixed(2);
   }
 
-  Future<void> _navigateToDetail(InventoryItem item) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => DetailItemPage(item: item)),
-    );
-    if (result == true && mounted) {
-      _loadItems();
+  String _formatPrice(double price) {
+    // Jika angka bulat, tampilkan tanpa desimal
+    if (price == price.toInt()) {
+      return price.toInt().toString();
     }
-  }
-
-  void _navigateToProfile() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => ProfilePage()),
-    );
-  }
-
-  Color _getStatusColor(String status) {
-    if (status.contains('Habis') || status.contains('Kadaluarsa')) {
-      return Colors.red;
-    } else if (status.contains('Menipis') || status.contains('Hampir Kadaluarsa')) {
-      return Colors.orange;
-    } else {
-      return Colors.green;
-    }
+    // Jika desimal, tampilkan dengan 2 digit desimal
+    return price.toStringAsFixed(2);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: Column(
-        children: [
-          // Header
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF4CAF50), Color(0xFF81C784)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(30),
-                bottomRight: Radius.circular(30),
-              ),
-            ),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Inventory Manager',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Total ${_allItems.length} item',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: _isCheckingNotification ? null : _checkNotifications,
-                          icon: _isCheckingNotification
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.notifications_active, color: Colors.white, size: 24),
-                          tooltip: 'Cek Notifikasi',
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.white.withOpacity(0.2),
-                            padding: const EdgeInsets.all(8),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    _buildStatusSummaryCard(),
-                    const SizedBox(height: 12),
-                    // Search Bar
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: TextField(
-                        onChanged: _onSearchChanged,
-                        decoration: InputDecoration(
-                          hintText: 'Cari barang...',
-                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey[400]),
-                          prefixIcon: const Icon(Icons.search, color: Color(0xFF4CAF50), size: 20),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide.none,
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.15),
-                    spreadRadius: 1,
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.filter_list, color: Color(0xFF4CAF50), size: 20),
-                  const SizedBox(width: 8),
-                  const Text('Filter:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: DropdownButton<String>(
-                      value: _selectedStatusFilter,
-                      isExpanded: true,
-                      underline: const SizedBox(),
-                      style: const TextStyle(fontSize: 13, color: Colors.black87),
-                      items: _statusFilters.map((f) => DropdownMenuItem(value: f, child: Text(f))).toList(),
-                      onChanged: _onStatusFilterChanged,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
-                : _filteredItems.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.inventory_2_outlined, size: 70, color: Colors.grey[400]),
-                            const SizedBox(height: 12),
-                            Text(
-                              _searchQuery.isNotEmpty || _selectedStatusFilter != 'Semua Status'
-                                  ? 'Tidak ada item yang sesuai'
-                                  : 'Belum ada item',
-                              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                            ),
-                          ],
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _loadItems,
-                        color: const Color(0xFF4CAF50),
-                        child: ListView.builder(
-                          padding: const EdgeInsets.only(left: 20, right: 20, top: 8, bottom: 90),
-                          itemCount: _filteredItems.length,
-                          itemBuilder: (context, index) => _buildItemCard(_filteredItems[index]),
-                        ),
-                      ),
-          ),
+      body: CustomScrollView(
+        slivers: [
+          _buildAppBar(),
+          SliverToBoxAdapter(child: _buildDashboardStats()),
+          SliverToBoxAdapter(child: _buildSearchBar()),
+          SliverToBoxAdapter(child: _buildFilterSort()),
+          _buildItemsList(),
         ],
       ),
+      bottomNavigationBar: _buildBottomNavBar(),
+    );
+  }
 
-      bottomNavigationBar: Container(
-        height: 65,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(color: Colors.grey.withOpacity(0.3), spreadRadius: 1, blurRadius: 10, offset: const Offset(0, -3)),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  Widget _buildAppBar() {
+    return SliverAppBar(
+      expandedHeight: 120,
+      floating: false,
+      pinned: true,
+      backgroundColor: const Color(0xFF26A69A),
+      flexibleSpace: FlexibleSpaceBar(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Home
-            Expanded(
-              child: InkWell(
-                onTap: () {},
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.home, color: const Color(0xFF4CAF50), size: 28),
-                    const SizedBox(height: 4),
-                    const Text('Home', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 12, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
+            const Icon(
+              Icons.inventory_2_rounded,
+              color: Colors.white,
+              size: 24,
             ),
-
-            Expanded(
-              child: InkWell(
-                onTap: () => _navigateToAddEdit(),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(color: Color(0xFF4CAF50), shape: BoxShape.circle),
-                      child: const Icon(Icons.add, color: Colors.white, size: 28),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text('Tambah', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 12, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-            ),
-
-            Expanded(
-              child: InkWell(
-                onTap: _navigateToProfile,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.person, color: const Color(0xFF4CAF50), size: 28),
-                    const SizedBox(height: 4),
-                    const Text('Profile', style: TextStyle(color: Color(0xFF4CAF50), fontSize: 12, fontWeight: FontWeight.w600)),
-                  ],
-                ),
+            const SizedBox(width: 8),
+            const Text(
+              'StokMate',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 20,
               ),
             ),
           ],
         ),
+        background: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF26A69A), Color(0xFF4DB6AC)],
+            ),
+          ),
+        ),
       ),
+      actions: [
+        Stack(
+          children: [
+            IconButton(
+              onPressed: _isCheckingNotification ? null : _checkNotifications,
+              icon: _isCheckingNotification
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.notifications_outlined,
+                      color: Colors.white,
+                    ),
+            ),
+            if (NotificationHelper.getTotalProblematicItems(_allItems) > 0)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFF6B6B),
+                    shape: BoxShape.circle,
+                  ),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  child: Text(
+                    '${NotificationHelper.getTotalProblematicItems(_allItems)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 8),
+      ],
     );
   }
 
-  Widget _buildStatusSummaryCard() {
+  Widget _buildDashboardStats() {
     return Container(
-      padding: const EdgeInsets.all(10),
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+        color: const Color(0xFFF5FFFE),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildStatusItem(_statusCounts['outOfStock'] ?? 0, 'Habis'),
-          _buildStatusItem(_statusCounts['expired'] ?? 0, 'Exp'),
-          _buildStatusItem(_statusCounts['lowStock'] ?? 0, 'Tipis'),
-          _buildStatusItem(_statusCounts['nearExpiry'] ?? 0, 'Hampir Kadaluarsa'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Ringkasan Stok',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF00695C),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF26A69A).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  'Total: ${_allItems.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF26A69A),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  icon: Icons.remove_shopping_cart,
+                  label: 'Habis',
+                  count: _statusCounts['outOfStock'] ?? 0,
+                  color: const Color(0xFFFF6B6B),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  icon: Icons.warning_amber_rounded,
+                  label: 'Kadaluarsa',
+                  count: _statusCounts['expired'] ?? 0,
+                  color: const Color(0xFFFF6B6B),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  icon: Icons.trending_down,
+                  label: 'Menipis',
+                  count: _statusCounts['lowStock'] ?? 0,
+                  color: const Color(0xFFFFB74D),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  icon: Icons.access_time,
+                  label: 'Hampir Exp',
+                  count: _statusCounts['nearExpiry'] ?? 0,
+                  color: const Color(0xFFFFB74D),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildStatusItem(int count, String label) {
-    return Column(
-      children: [
-        Text('$count', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-        Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70)),
-      ],
+  Widget _buildStatCard({
+    required IconData icon,
+    required String label,
+    required int count,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 8),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      child: TextField(
+        onChanged: (value) {
+          setState(() {
+            _searchQuery = value;
+            _applyFiltersAndSort();
+          });
+        },
+        decoration: InputDecoration(
+          hintText: 'Cari barang atau kategori...',
+          hintStyle: const TextStyle(color: Color(0xFF80CBC4)),
+          prefixIcon: const Icon(Icons.search, color: Color(0xFF26A69A)),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, color: Color(0xFF80CBC4)),
+                  onPressed: () {
+                    setState(() {
+                      _searchQuery = '';
+                      _applyFiltersAndSort();
+                    });
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: const Color(0xFFF5FFFE),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterSort() {
+    return Container(
+      margin: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildDropdownButton(
+              icon: Icons.filter_list,
+              value: _selectedStatusFilter,
+              items: _statusFilters,
+              onChanged: (value) {
+                setState(() {
+                  _selectedStatusFilter = value!;
+                  _applyFiltersAndSort();
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildDropdownButton(
+              icon: Icons.currency_exchange,
+              value: _selectedCurrencyFilter,
+              items: _currencyFilters,
+              onChanged: (value) {
+                setState(() {
+                  _selectedCurrencyFilter = value!;
+                  _applyFiltersAndSort();
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildDropdownButton(
+              icon: Icons.sort,
+              value: _selectedSortOption,
+              items: _sortOptions,
+              onChanged: (value) {
+                setState(() {
+                  _selectedSortOption = value!;
+                  _applyFiltersAndSort();
+                });
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDropdownButton({
+    required IconData icon,
+    required String value,
+    required List<String> items,
+    required Function(String?) onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5FFFE),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          icon: Icon(icon, color: const Color(0xFF26A69A), size: 20),
+          style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF00695C),
+            fontWeight: FontWeight.w500,
+          ),
+          items: items.map((item) {
+            return DropdownMenuItem(
+              value: item,
+              child: Text(
+                item,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemsList() {
+    if (_isLoading) {
+      return const SliverFillRemaining(
+        child: Center(
+          child: CircularProgressIndicator(color: Color(0xFF26A69A)),
+        ),
+      );
+    }
+
+    if (_filteredItems.isEmpty) {
+      return SliverFillRemaining(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.inventory_2_outlined,
+                size: 80,
+                color: const Color(0xFF80CBC4).withOpacity(0.5),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _searchQuery.isNotEmpty ||
+                        _selectedStatusFilter != 'Semua Status'
+                    ? 'Tidak ada item yang sesuai'
+                    : 'Belum ada item tersimpan',
+                style: const TextStyle(fontSize: 16, color: Color(0xFF00796B)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => _buildItemCard(_filteredItems[index]),
+          childCount: _filteredItems.length,
+        ),
+      ),
     );
   }
 
@@ -474,57 +673,124 @@ class _HomePageState extends State<HomePage> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () => _navigateToDetail(item),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      _getCategoryIcon(item.category),
+                      color: statusColor,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
-                        const SizedBox(height: 2),
-                        Text(item.category, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                        Text(
+                          item.name,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF00695C),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.category,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF00796B),
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: statusColor, width: 1.2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
                     ),
-                    child: Text(status, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 10)),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: statusColor.withOpacity(0.3)),
+                    ),
+                    child: Text(
+                      status,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 11,
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              const Divider(height: 1),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(child: _buildInfoChip(Icons.inventory_2, 'Stok: ${item.quantity} ${item.unit}', item.quantity == 0 ? Colors.red : item.quantity <= 1 ? Colors.orange : Colors.green)),
-                  const SizedBox(width: 6),
-                  Expanded(child: _buildInfoChip(Icons.attach_money, '${item.price} ${item.currency}', const Color(0xFF2E7D32))),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(child: _buildInfoChip(Icons.calendar_today, daysRemaining <= 0 ? 'Kadaluarsa' : '$daysRemaining hari', daysRemaining <= 0 ? Colors.red : daysRemaining <= 7 ? Colors.orange : Colors.green)),
-                  const SizedBox(width: 6),
-                  Expanded(child: _buildInfoChip(Icons.location_on, item.location, const Color(0xFF2E7D32))),
-                ],
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE0F7F4),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _buildInfoItem(
+                        Icons.inventory_2_outlined,
+                        '${_formatQuantity(item.quantity)} ${item.unit}',
+                        item.quantity == 0
+                            ? const Color(0xFFFF6B6B)
+                            : item.quantity <= 1
+                            ? const Color(0xFFFFB74D)
+                            : const Color(0xFF26A69A),
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 30,
+                      color: const Color(0xFF80CBC4).withOpacity(0.3),
+                    ),
+                    Expanded(
+                      child: _buildInfoItem(
+                        Icons.payments_outlined,
+                        '${_formatPrice(item.price)} ${item.currency}',
+                        const Color(0xFF26A69A),
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 30,
+                      color: const Color(0xFF80CBC4).withOpacity(0.3),
+                    ),
+                    Expanded(
+                      child: _buildInfoItem(
+                        Icons.calendar_today_outlined,
+                        daysRemaining <= 0 ? 'Exp' : '$daysRemaining h',
+                        daysRemaining <= 0
+                            ? const Color(0xFFFF6B6B)
+                            : daysRemaining <= 7
+                            ? const Color(0xFFFFB74D)
+                            : const Color(0xFF26A69A),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -533,20 +799,116 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildInfoChip(IconData icon, String text, Color color) {
+  Widget _buildInfoItem(IconData icon, String text, Color color) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'bumbu dapur':
+        return Icons.restaurant;
+      case 'produk segar':
+        return Icons.grass;
+      case 'minuman':
+        return Icons.local_drink;
+      case 'kesehatan':
+        return Icons.medication;
+      case 'kamar mandi':
+        return Icons.bathroom;
+      case 'kebersihan':
+        return Icons.cleaning_services;
+      case 'perawatan diri & kosmetik':
+        return Icons.face;
+      case 'atk':
+        return Icons.edit;
+      default:
+        return Icons.inventory_2;
+    }
+  }
+
+  Widget _buildBottomNavBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-      decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(6)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 3),
-          Expanded(
-            child: Text(text, style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5FFFE),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
           ),
         ],
       ),
+      child: BottomNavigationBar(
+        backgroundColor: const Color(0xFFF5FFFE),
+        selectedItemColor: const Color(0xFF26A69A),
+        unselectedItemColor: const Color(0xFF80CBC4),
+        currentIndex: 0,
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_rounded),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.add_circle_outline),
+            label: 'Tambah',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_rounded),
+            label: 'Profile',
+          ),
+        ],
+        onTap: (index) {
+          if (index == 1) {
+            _navigateToAddEdit();
+          } else if (index == 2) {
+            _navigateToProfile();
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _navigateToAddEdit({InventoryItem? item}) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => AddEditPage(itemToEdit: item)),
+    );
+    if (result == true && mounted) _loadItems();
+  }
+
+  Future<void> _navigateToDetail(InventoryItem item) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DetailItemPage(item: item)),
+    );
+    if (result == true && mounted) _loadItems();
+  }
+
+  void _navigateToProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfilePage()),
     );
   }
 }
+
+enum SnackbarType { success, error, warning, info }

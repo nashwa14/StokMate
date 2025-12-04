@@ -35,7 +35,6 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
-
     await Workmanager().initialize(
       callbackDispatcher,
       isInDebugMode: false,
@@ -50,9 +49,110 @@ class NotificationService {
     _initialized = true;
     print("✅ Notification Service initialized");
   }
-
   static void _onNotificationTapped(NotificationResponse response) {
     print("Notification tapped: ${response.payload}");
+  }
+
+  static Future<void> showStockSummaryNotification(List<InventoryItem> items) async {
+    try {
+      final summary = NotificationHelper.getStockSummary(items);
+      final total = NotificationHelper.getTotalProblematicItems(items);
+
+      if (total == 0) {
+        await _showNotification(
+          id: 0,
+          title: '✅ Semua Barang Aman',
+          body: 'Tidak ada barang yang perlu perhatian khusus',
+          priority: Priority.defaultPriority,
+        );
+        return;
+      }
+
+      final message = NotificationHelper.generateDetailedMessage(items);
+      await _showNotification(
+        id: 0,
+        title: '📊 Ringkasan Stok',
+        body: message,
+        priority: Priority.high,
+      );
+
+      int notifId = 1;
+
+      if (summary['outOfStock']!.isNotEmpty) {
+        final items = summary['outOfStock']!;
+        await _showNotification(
+          id: notifId++,
+          title: '🚨 Stok Habis (${items.length})',
+          body: items.map((e) => e.name).take(3).join(", ") + 
+                (items.length > 3 ? ', dan lainnya' : ''),
+          priority: Priority.high,
+        );
+      }
+
+      if (summary['expired']!.isNotEmpty) {
+        final items = summary['expired']!;
+        await _showNotification(
+          id: notifId++,
+          title: '⚠️ Barang Kadaluarsa (${items.length})',
+          body: items.map((e) => e.name).take(3).join(", ") + 
+                (items.length > 3 ? ', dan lainnya' : ''),
+          priority: Priority.high,
+        );
+      }
+
+      if (summary['lowStock']!.isNotEmpty) {
+        final items = summary['lowStock']!;
+        await _showNotification(
+          id: notifId++,
+          title: '📦 Stok Menipis (${items.length})',
+          body: items.map((e) => e.name).take(3).join(", ") + 
+                (items.length > 3 ? ', dan lainnya' : ''),
+          priority: Priority.defaultPriority,
+        );
+      }
+
+      if (summary['nearExpiry']!.isNotEmpty) {
+        final items = summary['nearExpiry']!;
+        await _showNotification(
+          id: notifId++,
+          title: '⏰ Hampir Kadaluarsa (${items.length})',
+          body: items.map((e) => e.name).take(3).join(", ") + 
+                (items.length > 3 ? ', dan lainnya' : ''),
+          priority: Priority.defaultPriority,
+        );
+      }
+
+      print("✅ Notifikasi stok berhasil ditampilkan");
+    } catch (e) {
+      print("❌ Error menampilkan notifikasi: $e");
+    }
+  }
+
+  static Future<void> showItemAddedNotification(String itemName) async {
+    await _showNotification(
+      id: 100,
+      title: '✅ Barang Berhasil Ditambahkan',
+      body: '$itemName telah ditambahkan ke inventory',
+      priority: Priority.defaultPriority,
+    );
+  }
+
+  static Future<void> showItemUpdatedNotification(String itemName) async {
+    await _showNotification(
+      id: 101,
+      title: '✏️ Barang Berhasil Diperbarui',
+      body: '$itemName telah diperbarui',
+      priority: Priority.defaultPriority,
+    );
+  }
+
+  static Future<void> showItemDeletedNotification(String itemName) async {
+    await _showNotification(
+      id: 102,
+      title: '🗑️ Barang Berhasil Dihapus',
+      body: '$itemName telah dihapus dari inventory',
+      priority: Priority.defaultPriority,
+    );
   }
 
   static Future<void> checkAndNotify() async {
@@ -62,54 +162,33 @@ class NotificationService {
         await Hive.openBox(HiveService.inventoryBox);
       }
 
-      final items = await HiveService.getAllInventoryItems();
-      final List<InventoryItem> inventory =
-          items.map((map) => InventoryItem.fromMap(map)).toList();
+      final box = await HiveService.getInventoryBox();
+      final List<InventoryItem> inventory = [];
 
-      final outOfStock = NotificationHelper.getOutOfStockItems(inventory);
-      final expired = NotificationHelper.getExpiredItems(inventory);
-      final lowStock = NotificationHelper.getLowStockItems(inventory);
-      final nearExpiry = NotificationHelper.getNearExpiryItems(inventory);
-
-      if (outOfStock.isNotEmpty) {
-        await _showNotification(
-          id: 1,
-          title: '🚨 Stok Habis!',
-          body: '${outOfStock.length} barang stoknya habis: ${outOfStock.map((e) => e.name).join(", ")}',
-          priority: Priority.high,
-        );
+      for (var key in box.keys) {
+        final value = box.get(key);
+        if (value is Map) {
+          try {
+            final keyStr = key.toString();
+            final parts = keyStr.split('_');
+            if (parts.length >= 2) {
+              final id = parts.sublist(1).join('_');
+              final map = Map<String, dynamic>.from(value);
+              map['id'] = id;
+              inventory.add(InventoryItem.fromMap(map));
+            }
+          } catch (e) {
+            print("Error parsing item: $e");
+          }
+        }
       }
-
-      if (expired.isNotEmpty) {
-        await _showNotification(
-          id: 2,
-          title: '⚠️ Barang Kadaluarsa!',
-          body: '${expired.length} barang sudah kadaluarsa: ${expired.map((e) => e.name).join(", ")}',
-          priority: Priority.high,
-        );
+      final total = NotificationHelper.getTotalProblematicItems(inventory);
+      if (total > 0) {
+        await showStockSummaryNotification(inventory);
       }
-
-      if (lowStock.isNotEmpty) {
-        await _showNotification(
-          id: 3,
-          title: '📦 Stok Menipis',
-          body: '${lowStock.length} barang stoknya menipis: ${lowStock.map((e) => e.name).join(", ")}',
-          priority: Priority.defaultPriority,
-        );
-      }
-
-      if (nearExpiry.isNotEmpty) {
-        await _showNotification(
-          id: 4,
-          title: 'Hampir Kadaluarsa',
-          body: '${nearExpiry.length} barang akan kadaluarsa dalam ${nearExpiry.map((e) => e.name).join(", ")}',
-          priority: Priority.defaultPriority,
-        );
-      }
-
-      print("Pengecekan notifikasi selesai");
+      print("✅ Background check selesai");
     } catch (e) {
-      print("Error saat cek notifikasi: $e");
+      print("❌ Error saat background check: $e");
     }
   }
 
@@ -128,12 +207,12 @@ class NotificationService {
       priority: priority,
       enableVibration: true,
       playSound: true,
+      icon: '@mipmap/ic_launcher',
     );
 
     final NotificationDetails notificationDetails = NotificationDetails(
       android: androidDetails,
     );
-
     await _notifications.show(
       id,
       title,
@@ -145,7 +224,9 @@ class NotificationService {
   static Future<void> cancelAll() async {
     await _notifications.cancelAll();
   }
-
+  static Future<void> cancelNotification(int id) async {
+    await _notifications.cancel(id);
+  }
   static Future<void> stopBackgroundCheck() async {
     await Workmanager().cancelAll();
   }

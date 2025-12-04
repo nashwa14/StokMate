@@ -1,8 +1,9 @@
 import 'package:nashwaluthfiya_124230016_pam_a/models/inventory_models.dart';
 
 class NotificationHelper {
-  static const int lowStockThreshold = 5;
+  static const double lowStockThreshold = 5.0; // Ubah ke double
   static const int nearExpiryDays = 7;
+  
   static List<InventoryItem> getOutOfStockItems(List<InventoryItem> items) {
     return items.where((item) => item.quantity == 0).toList();
   }
@@ -10,7 +11,6 @@ class NotificationHelper {
   static List<InventoryItem> getExpiredItems(List<InventoryItem> items) {
     final now = DateTime.now();
     return items.where((item) {
-      // Bandingkan hanya tanggal (tanpa waktu)
       final expiryDateOnly = DateTime(
         item.expiryDate.year,
         item.expiryDate.month,

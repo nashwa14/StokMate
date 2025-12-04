@@ -2,12 +2,12 @@ class InventoryItem {
   String? id;
   String name;
   String category;
-  int quantity;
+  double quantity; 
   String unit;
   double price;
-  String currency; 
+  String currency;
   DateTime expiryDate;
-  String location; 
+  String location;
   double latitude;
   double longitude;
 
@@ -30,7 +30,7 @@ class InventoryItem {
       'id': id,
       'name': name,
       'category': category,
-      'quantity': quantity,
+      'quantity': quantity, 
       'unit': unit,
       'price': price,
       'currency': currency,
@@ -41,14 +41,18 @@ class InventoryItem {
     };
   }
 
-  factory InventoryItem.fromMap(Map<dynamic, dynamic> map) {
+  factory InventoryItem.fromMap(Map<String, dynamic> map) {
     return InventoryItem(
       id: map['id'] as String?,
       name: map['name'] as String,
       category: map['category'] as String,
-      quantity: map['quantity'] as int,
+      quantity: (map['quantity'] is int) 
+          ? (map['quantity'] as int).toDouble() 
+          : (map['quantity'] as double),
       unit: map['unit'] as String,
-      price: map['price'] as double,
+      price: (map['price'] is int) 
+          ? (map['price'] as int).toDouble() 
+          : (map['price'] as double),
       currency: map['currency'] as String,
       expiryDate: DateTime.parse(map['expiryDate'] as String),
       location: map['location'] as String,
